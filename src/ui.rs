@@ -4,6 +4,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::Gauge,
     Frame,
 };
 
@@ -53,11 +54,49 @@ fn render_package_list(f: &mut Frame, app: &App, area: Rect) {
 fn render_right_panel(f: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .constraints([Constraint::Length(3), Constraint::Length(3), Constraint::Min(0)])
         .split(area);
 
     render_input(f, app, chunks[0]);
-    render_response(f, app, chunks[1]);
+    render_progress(f, app, chunks[1]);
+    render_response(f, app, chunks[2]);
+}
+
+fn render_progress(f: &mut Frame, app: &App, area: Rect) {
+    if let (Some(current), Some(total)) = (app.progress_current, app.progress_total) {
+        let ratio = if total == 0 {
+            0.0
+        } else {
+            (current as f64) / (total as f64)
+        };
+
+        let msg = app
+            .progress_message
+            .as_ref()
+            .map(|s| s.as_str())
+            .unwrap_or("");
+
+        let gauge = Gauge::default()
+            .block(
+                Block::default()
+                    .title("🔁 Indexing Progress")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Cyan)),
+            )
+            .gauge_style(Style::default().fg(Color::Yellow))
+            .ratio(ratio);
+
+        f.render_widget(gauge, area);
+
+        // overlay a small paragraph with text about progress
+        let info = Paragraph::new(format!("{}/{} {}", current, total, msg))
+            .style(Style::default().fg(Color::White));
+        f.render_widget(info, area);
+    } else {
+        // render empty block to keep layout consistent
+        let block = Block::default().borders(Borders::ALL);
+        f.render_widget(block, area);
+    }
 }
 
 fn render_input(f: &mut Frame, app: &App, area: Rect) {

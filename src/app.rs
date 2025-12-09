@@ -13,6 +13,10 @@ pub struct App {
     pub input: String,
     pub response: String,
     pub should_quit: bool,
+    // Progress for indexing (current / total)
+    pub progress_current: Option<usize>,
+    pub progress_total: Option<usize>,
+    pub progress_message: Option<String>,
 }
 
 impl App {
@@ -24,6 +28,9 @@ impl App {
             input: String::new(),
             response: String::new(),
             should_quit: false,
+            progress_current: None,
+            progress_total: None,
+            progress_message: None,
         }
     }
 
@@ -61,6 +68,25 @@ impl App {
     pub fn set_response(&mut self, response: String) {
         self.response = response;
         self.state = AppState::Normal;
+    }
+
+    pub fn set_progress(&mut self, total: usize) {
+        self.progress_total = Some(total);
+        self.progress_current = Some(0);
+        self.progress_message = None;
+    }
+
+    pub fn update_progress(&mut self, current: usize, message: Option<String>) {
+        self.progress_current = Some(current);
+        if let Some(m) = message {
+            self.progress_message = Some(m);
+        }
+    }
+
+    pub fn clear_progress(&mut self) {
+        self.progress_current = None;
+        self.progress_total = None;
+        self.progress_message = None;
     }
 
     pub fn push_char(&mut self, c: char) {
