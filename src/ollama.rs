@@ -140,6 +140,77 @@ impl OllamaClient {
         anyhow::bail!("Failed to get embedding after retries")
     }
 
+    /// Generate embeddings for multiple texts in a single batch request (more efficient)
+    pub async fn generate_embeddings_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        #[derive(Serialize)]
+        struct BatchEmbedRequest {
+            model: String,
+            prompts: Vec<String>,
+        }
+
+        #[derive(Deserialize)]
+        struct BatchEmbedResponse {
+            embeddings: Vec<Vec<f32>>,
+        }
+
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let request = BatchEmbedRequest {
+            model: "nomic-embed-text".to_string(),
+            prompts: texts.iter().map(|t| t.to_string()).collect(),
+        };
+
+        // Retry loop with exponential backoff
+        for attempt in 0..self.max_retries {
+            let permit = self.limiter.clone().acquire_owned().await.unwrap();
+
+            let resp_result = self
+                .client
+                .post(format!("{}/api/embeddings", self.base_url))
+                .json(&request)
+                .send()
+                .await;
+
+            drop(permit);
+
+            match resp_result {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        let batch_response: BatchEmbedResponse = response.json().await?;
+                        return Ok(batch_response.embeddings);
+                    } else {
+                        let status = response.status();
+                        if status.as_u16() == 429 || status.is_server_error() {
+                            if attempt + 1 == self.max_retries {
+                                crate::log::log_error(&format!("Batch embedding failed after retries: {}", status));
+                                anyhow::bail!("Batch embedding failed after retries: {}", status);
+                            }
+                        } else {
+                            anyhow::bail!("Batch embedding request failed: {}", status);
+                        }
+                    }
+                }
+                Err(e) => {
+                    if attempt + 1 == self.max_retries {
+                        return Err(anyhow::anyhow!("Batch embedding network error: {}", e));
+                    }
+                }
+            }
+
+            // Exponential backoff with jitter
+            let exp = 2u64.pow(attempt as u32);
+            let base = self.base_backoff_ms.saturating_mul(exp);
+            let mut rng = rand::thread_rng();
+            let jitter: u64 = rng.gen_range(0..=base);
+            let backoff = Duration::from_millis(base.saturating_add(jitter));
+            sleep(backoff).await;
+        }
+
+        anyhow::bail!("Failed to get batch embeddings after retries")
+    }
+
     fn build_prompt(&self, user_query: &str, packages: &[String], context: Option<&str>) -> String {
         let context_section = if let Some(ctx) = context {
             format!(
