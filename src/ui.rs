@@ -78,7 +78,7 @@ fn render_response(f: &mut Frame, app: &App, area: Rect) {
             )),
             Line::from(""),
             Line::from(Span::styled(
-                "Press 'q' to quit, 'r' to rebuild, ↑↓ to scroll",
+                "Press 'q' to quit, 'ctrl + r' to rebuild, ↑↓ to scroll",
                 Style::default().fg(Color::Gray),
             )),
         ])
