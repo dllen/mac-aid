@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
     let packages = brew::get_installed_packages()?;
 
     // Initialize Ollama client
-    let ollama = OllamaClient::new("llama3.2".to_string());
+    let ollama = OllamaClient::new("qwen3-coder:480b-cloud".to_string());
 
     // Initialize vector store (open DB now)
     let db_path = get_db_path()?;
