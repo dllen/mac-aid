@@ -90,8 +90,9 @@ impl OllamaClient {
             embedding: Vec<f32>,
         }
 
+        //embeddinggemma:latest
         let request = EmbedRequest {
-            model: "embeddinggemma:latest".to_string(),
+            model:"all-minilm".to_string(),
             prompt: text.to_string(),
         };
 
@@ -167,8 +168,9 @@ impl OllamaClient {
             return Ok(Vec::new());
         }
 
+        //embeddinggemma:latest
         let request = BatchEmbedRequest {
-            model: "embeddinggemma:latest".to_string(),
+            model:"all-minilm".to_string(),
             prompts: texts.iter().map(|t| t.to_string()).collect(),
         };
 
