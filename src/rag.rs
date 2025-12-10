@@ -2,13 +2,13 @@ use anyhow::Result;
 use crate::ollama::OllamaClient;
 use crate::vector_store::VectorStore;
 
-pub struct RagPipeline {
-    vector_store: VectorStore,
-    ollama_client: OllamaClient,
+pub struct RagPipeline<'a> {
+    vector_store: &'a VectorStore,
+    ollama_client: &'a OllamaClient,
 }
 
-impl RagPipeline {
-    pub fn new(vector_store: VectorStore, ollama_client: OllamaClient) -> Self {
+impl<'a> RagPipeline<'a> {
+    pub fn new(vector_store: &'a VectorStore, ollama_client: &'a OllamaClient) -> Self {
         Self {
             vector_store,
             ollama_client,

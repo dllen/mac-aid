@@ -64,7 +64,7 @@ pub async fn index_brew_packages(packages: &[String]) -> Result<Vec<CommandDoc>>
             }
             Err(_) => {
                 // Some packages don't have man pages, skip them
-                eprintln!("No man page for: {}", package);
+                crate::log::log_error(&format!("No man page for: {}", package));
             }
         }
     }

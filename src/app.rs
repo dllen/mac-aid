@@ -10,6 +10,8 @@ pub struct App {
     pub should_quit: bool,
     // Status message for indexing or other operations
     pub status: Option<String>,
+    // Scroll offset for response window
+    pub scroll_offset: u16,
 }
 
 impl App {
@@ -20,6 +22,7 @@ impl App {
             response: String::new(),
             should_quit: false,
             status: None,
+            scroll_offset: 0,
         }
     }
 
@@ -33,10 +36,21 @@ impl App {
 
     pub fn set_response(&mut self, response: String) {
         self.response = response;
+        self.scroll_offset = 0;
     }
 
     pub fn set_status(&mut self, status: Option<String>) {
         self.status = status;
+    }
+
+    pub fn scroll_up(&mut self) {
+        if self.scroll_offset > 0 {
+            self.scroll_offset -= 1;
+        }
+    }
+
+    pub fn scroll_down(&mut self) {
+        self.scroll_offset = self.scroll_offset.saturating_add(1);
     }
 
     pub fn push_char(&mut self, c: char) {

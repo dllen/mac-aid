@@ -143,6 +143,15 @@ impl VectorStore {
         )?;
         Ok(count as usize)
     }
+
+    /// Clear all commands from the store (used for rebuild)
+    pub fn clear(&mut self) -> Result<()> {
+        // Use a transaction for safety and performance
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM commands", [])?;
+        tx.commit()?;
+        Ok(())
+    }
 }
 
 /// Calculate cosine similarity between two vectors
