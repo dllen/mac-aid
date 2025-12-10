@@ -96,42 +96,21 @@ async fn main() -> Result<()> {
         for batch_start in (0..total).step_by(batch_size) {
             let batch_end = std::cmp::min(batch_start + batch_size, total);
             let batch = &docs[batch_start..batch_end];
-            
-            // Prepare texts for batch embedding
-            let texts: Vec<&str> = batch.iter().map(|d| d.man_content.as_str()).collect();
-            
-            match ollama.generate_embeddings_batch(&texts).await {
-                Ok(embeddings) => {
-                    for (doc, embedding) in batch.iter().zip(embeddings.iter()) {
+
+            for doc in batch {
+                match ollama.generate_embedding(&doc.man_content).await {
+                    Ok(embedding) => {
                         if let Err(e) = vector_store.store_command(
                             &doc.package_name,
                             &doc.command_name,
                             &doc.man_content,
-                            embedding,
+                            &embedding,
                         ) {
                             crate::log::log_error(&format!("Failed to store: {}: {}", doc.command_name, e));
                         }
                     }
-                }
-                Err(e) => {
-                    crate::log::log_error(&format!("Batch embedding failed (docs {}-{}): {}", batch_start, batch_end, e));
-                    // Fall back to individual embedding for this batch
-                    for doc in batch {
-                        match ollama.generate_embedding(&doc.man_content).await {
-                            Ok(embedding) => {
-                                if let Err(e) = vector_store.store_command(
-                                    &doc.package_name,
-                                    &doc.command_name,
-                                    &doc.man_content,
-                                    &embedding,
-                                ) {
-                                    crate::log::log_error(&format!("Failed to store: {}: {}", doc.command_name, e));
-                                }
-                            }
-                            Err(e) => {
-                                crate::log::log_error(&format!("Failed to embed: {}: {}", doc.command_name, e));
-                            }
-                        }
+                    Err(e) => {
+                        crate::log::log_error(&format!("Failed to embed: {}: {}", doc.command_name, e));
                     }
                 }
             }
@@ -338,45 +317,25 @@ async fn rebuild_knowledge_base(
     let total = docs.len();
 
     // Process docs in batches of 10 for better efficiency
-    let batch_size = 10;
+    let batch_size = 5;
     for batch_start in (0..total).step_by(batch_size) {
         let batch_end = std::cmp::min(batch_start + batch_size, total);
         let batch = &docs[batch_start..batch_end];
         
-        let texts: Vec<&str> = batch.iter().map(|d| d.man_content.as_str()).collect();
-        
-        match ollama.generate_embeddings_batch(&texts).await {
-            Ok(embeddings) => {
-                for (doc, embedding) in batch.iter().zip(embeddings.iter()) {
+        for doc in batch {
+            match ollama.generate_embedding(&doc.man_content).await {
+                Ok(embedding) => {
                     if let Err(e) = vector_store.store_command(
                         &doc.package_name,
                         &doc.command_name,
                         &doc.man_content,
-                        embedding,
+                        &embedding,
                     ) {
                         crate::log::log_error(&format!("Failed to store: {}: {}", doc.command_name, e));
                     }
                 }
-            }
-            Err(e) => {
-                crate::log::log_error(&format!("Batch embedding failed (docs {}-{}): {}", batch_start, batch_end, e));
-                // Fall back to individual embedding for this batch
-                for doc in batch {
-                    match ollama.generate_embedding(&doc.man_content).await {
-                        Ok(embedding) => {
-                            if let Err(e) = vector_store.store_command(
-                                &doc.package_name,
-                                &doc.command_name,
-                                &doc.man_content,
-                                &embedding,
-                            ) {
-                                crate::log::log_error(&format!("Failed to store: {}: {}", doc.command_name, e));
-                            }
-                        }
-                        Err(e) => {
-                            crate::log::log_error(&format!("Failed to embed: {}: {}", doc.command_name, e));
-                        }
-                    }
+                Err(e) => {
+                    crate::log::log_error(&format!("Failed to embed: {}: {}", doc.command_name, e));
                 }
             }
         }

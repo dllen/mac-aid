@@ -91,7 +91,7 @@ impl OllamaClient {
         }
 
         let request = EmbedRequest {
-            model: "nomic-embed-text".to_string(),
+            model: "all-minilm".to_string(),
             prompt: text.to_string(),
         };
 
