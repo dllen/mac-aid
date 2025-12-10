@@ -26,6 +26,11 @@ impl VectorStore {
 
         let conn = Connection::open(db_path)?;
         
+        // Performance optimization: enable WAL mode for better concurrent read performance
+        conn.execute_batch("PRAGMA journal_mode = WAL")?;
+        // Increase cache size to reduce disk I/O
+        conn.execute_batch("PRAGMA cache_size = 10000")?;
+        
         // Create tables
         conn.execute(
             "CREATE TABLE IF NOT EXISTS commands (
@@ -105,6 +110,11 @@ impl VectorStore {
     pub fn search_similar(&self, query_embedding: &[f32], top_k: usize) -> Result<Vec<StoredCommand>> {
         let all_commands = self.get_all_commands()?;
         
+        // Early return if no commands exist
+        if all_commands.is_empty() {
+            return Ok(Vec::new());
+        }
+        
         let mut scored_commands: Vec<(f32, StoredCommand)> = all_commands
             .into_iter()
             .map(|cmd| {
@@ -114,7 +124,8 @@ impl VectorStore {
             .collect();
 
         // Sort by similarity (descending)
-        scored_commands.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+        // Use unwrap_or for safety in case of NaN values
+        scored_commands.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
         // Take top k
         Ok(scored_commands

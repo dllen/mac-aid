@@ -384,6 +384,10 @@ async fn rebuild_knowledge_base(
         // Update status
         app.set_status(Some(format!("Rebuilding: {}/{} commands", batch_end, total)));
         terminal.draw(|f| ui::render(f, app))?;
+        
+        // Yield CPU to prevent UI blocking during KB rebuild
+        // 50ms is optimal: long enough to batch process, short enough for responsive UI
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     }
 
     let count = vector_store.count()?;

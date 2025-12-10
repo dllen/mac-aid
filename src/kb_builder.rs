@@ -19,7 +19,7 @@ pub async fn build_kb(
     let ollama = OllamaClient::new("llama3.2".to_string());
 
     // Open (or create) the vector store in this task
-    let mut vs = VectorStore::new(db_path.clone())?;
+    let vs = VectorStore::new(db_path.clone())?;
 
     // Index packages
     let package_names: Vec<String> = packages.iter().map(|p| p.name.clone()).collect();

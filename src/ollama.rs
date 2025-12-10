@@ -33,6 +33,9 @@ pub struct OllamaClient {
     // Simple rate limiter: maximum requests per second for batch calls
     requests_per_second: u32,
     last_request: Mutex<Instant>,
+    // Delay between single embedding requests (ms) - used in fallback scenarios
+    #[allow(dead_code)]
+    single_request_delay_ms: u64,
 }
 
 impl OllamaClient {
@@ -41,11 +44,12 @@ impl OllamaClient {
             client: Client::new(),
             base_url: "http://localhost:11434".to_string(),
             model,
-            limiter: Arc::new(Semaphore::new(4)), // allow 4 concurrent embedding requests by default
+            limiter: Arc::new(Semaphore::new(2)), // reduce to 2 concurrent embedding requests to lower QPS
             max_retries: 5,
-            base_backoff_ms: 500,
-            requests_per_second: 5,
-            last_request: Mutex::new(Instant::now() - Duration::from_millis(200)),
+            base_backoff_ms: 1000, // increase base backoff from 500 to 1000ms
+            requests_per_second: 2, // reduce from 5 to 2 requests per second
+            last_request: Mutex::new(Instant::now() - Duration::from_millis(500)),
+            single_request_delay_ms: 500, // 500ms delay between single requests
         }
     }
 
