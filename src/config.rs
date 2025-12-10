@@ -20,7 +20,12 @@ pub fn load_config() -> Result<Config> {
     let path = config_path()?;
     if path.exists() {
         let bytes = std::fs::read(&path)?;
-        let cfg: Config = serde_json::from_slice(&bytes)?;
+        let mut cfg: Config = serde_json::from_slice(&bytes)?;
+        if cfg.ollama_url.is_empty() {
+            cfg.ollama_url = "http://localhost:11434".to_string();
+            let json = serde_json::to_vec_pretty(&cfg)?;
+            std::fs::write(&path, json)?;
+        }
         return Ok(cfg);
     }
 
