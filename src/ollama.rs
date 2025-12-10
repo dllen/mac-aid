@@ -91,7 +91,7 @@ impl OllamaClient {
         }
 
         let request = EmbedRequest {
-            model: "all-minilm".to_string(),
+            model: "embeddinggemma:latest".to_string(),
             prompt: text.to_string(),
         };
 
@@ -168,7 +168,7 @@ impl OllamaClient {
         }
 
         let request = BatchEmbedRequest {
-            model: "nomic-embed-text".to_string(),
+            model: "embeddinggemma:latest".to_string(),
             prompts: texts.iter().map(|t| t.to_string()).collect(),
         };
 
