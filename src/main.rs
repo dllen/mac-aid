@@ -26,6 +26,7 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 use std::path::PathBuf;
 use vector_store::VectorStore;
+use std::env;
 
 #[derive(Debug, Clone, Copy)]
 enum AppCommand {
@@ -36,7 +37,25 @@ enum AppCommand {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize terminal
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 {
+        let cfg = config::load_config()?;
+        let mut ollama = OllamaClient::new(cfg.ollama_model.clone());
+        ollama.set_embed_model(cfg.embedding_model.clone());
+        let packages = brew::get_installed_packages()?;
+        let package_names: Vec<String> = packages.iter().map(|p| p.name.clone()).collect();
+        let query = args[1..].join(" ");
+        match ollama.query(&query, &package_names, None).await {
+            Ok(res) => {
+                println!("{}", res);
+            }
+            Err(e) => {
+                eprintln!("Error: {}", e);
+            }
+        }
+        return Ok(());
+    }
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
