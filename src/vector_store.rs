@@ -3,8 +3,6 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::indexer::CommandDoc;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredCommand {
     pub id: i64,
@@ -136,12 +134,6 @@ impl VectorStore {
         Ok(count == 0)
     }
 
-    /// Clear all commands
-    pub fn clear(&self) -> Result<()> {
-        self.conn.execute("DELETE FROM commands", [])?;
-        Ok(())
-    }
-
     /// Get command count
     pub fn count(&self) -> Result<usize> {
         let count: i64 = self.conn.query_row(
@@ -168,26 +160,4 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     }
 
     dot_product / (magnitude_a * magnitude_b)
-}
-
-/// Index all command docs into the vector store
-pub async fn index_commands(
-    store: &VectorStore,
-    docs: Vec<CommandDoc>,
-    embedding_fn: impl Fn(&str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<f32>>> + Send>>,
-) -> Result<()> {
-    for doc in docs {
-        // Generate embedding for the man content
-        let embedding = embedding_fn(&doc.man_content).await?;
-        
-        // Store in database
-        store.store_command(
-            &doc.package_name,
-            &doc.command_name,
-            &doc.man_content,
-            &embedding,
-        )?;
-    }
-    
-    Ok(())
 }

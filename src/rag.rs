@@ -58,11 +58,6 @@ impl RagPipeline {
             .query(user_query, packages, Some(&context))
             .await
     }
-
-    /// Get the vector store reference
-    pub fn vector_store(&self) -> &VectorStore {
-        &self.vector_store
-    }
 }
 
 /// Truncate text to a maximum length

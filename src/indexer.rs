@@ -9,18 +9,38 @@ pub struct CommandDoc {
 }
 
 /// Extract man page content for a given command
+/// Falls back to command help options if man page is not available
 pub fn get_man_page(command: &str) -> Result<String> {
+    // Try man page first
     let output = Command::new("man")
         .arg(command)
         .env("MANWIDTH", "80") // Set consistent width for parsing
         .output()?;
 
-    if !output.status.success() {
-        anyhow::bail!("Failed to get man page for: {}", command);
+    if output.status.success() {
+        let content = String::from_utf8(output.stdout)?;
+        return Ok(content);
     }
 
-    let content = String::from_utf8(output.stdout)?;
-    Ok(content)
+    // Fallback: try help options in order: -h, --help, -help
+    let help_options = vec!["-h", "--help", "-help"];
+    for option in help_options {
+        if let Ok(output) = Command::new(command)
+            .arg(option)
+            .output()
+        {
+            if output.status.success() {
+                if let Ok(content) = String::from_utf8(output.stdout) {
+                    if !content.trim().is_empty() {
+                        return Ok(content);
+                    }
+                }
+            }
+        }
+    }
+
+    // If all attempts fail, return error
+    anyhow::bail!("Failed to get man page or help for: {}", command);
 }
 
 /// Index all brew packages and their man pages
@@ -70,31 +90,4 @@ fn clean_man_content(content: &str) -> String {
         .collect();
     
     lines.join("\n")
-}
-
-/// Extract summary from man page (usually the NAME section)
-pub fn extract_summary(man_content: &str) -> String {
-    let lines: Vec<&str> = man_content.lines().collect();
-    let mut in_name_section = false;
-    let mut summary_lines = Vec::new();
-    
-    for line in lines {
-        if line.contains("NAME") {
-            in_name_section = true;
-            continue;
-        }
-        
-        if in_name_section {
-            if line.starts_with(char::is_uppercase) && !line.starts_with(' ') {
-                // New section started
-                break;
-            }
-            
-            if !line.trim().is_empty() {
-                summary_lines.push(line.trim());
-            }
-        }
-    }
-    
-    summary_lines.join(" ")
 }
