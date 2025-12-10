@@ -117,6 +117,7 @@ async fn main() -> Result<()> {
     loop {
         // Drain status messages from builder (non-blocking) and show in UI
         while let Ok(msg) = status_rx.try_recv() {
+            app.push_kb_progress(msg.clone());
             app.set_status(Some(msg));
             terminal.draw(|f| ui::render(f, &app))?;
         }

@@ -12,6 +12,7 @@ pub struct App {
     pub status: Option<String>,
     // Scroll offset for response window
     pub scroll_offset: u16,
+    pub kb_progress: Vec<String>,
 }
 
 impl App {
@@ -23,6 +24,7 @@ impl App {
             should_quit: false,
             status: None,
             scroll_offset: 0,
+            kb_progress: Vec::new(),
         }
     }
 
@@ -61,5 +63,12 @@ impl App {
         self.input.pop();
     }
 
+    pub fn push_kb_progress(&mut self, msg: String) {
+        self.kb_progress.push(msg);
+        if self.kb_progress.len() > 100 {
+            let overflow = self.kb_progress.len() - 100;
+            self.kb_progress.drain(0..overflow);
+        }
+    }
 
 }

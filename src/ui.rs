@@ -13,13 +13,15 @@ pub fn render(f: &mut Frame, app: &App) {
         .constraints([
             Constraint::Length(3),  // input box
             Constraint::Length(1),  // status line
+            Constraint::Length(7),  // KB progress box
             Constraint::Min(0),     // response area
         ])
         .split(f.area());
 
     render_input(f, app, chunks[0]);
     render_status(f, app, chunks[1]);
-    render_response(f, app, chunks[2]);
+    render_kb_progress(f, app, chunks[2]);
+    render_response(f, app, chunks[3]);
 }
 
 fn render_input(f: &mut Frame, app: &App, area: Rect) {
@@ -95,6 +97,31 @@ fn render_response(f: &mut Frame, app: &App, area: Rect) {
         )
         .wrap(Wrap { trim: true })
         .scroll((app.scroll_offset, 0));
+
+    f.render_widget(paragraph, area);
+}
+
+fn render_kb_progress(f: &mut Frame, app: &App, area: Rect) {
+    let lines: Vec<Line> = if app.kb_progress.is_empty() {
+        vec![Line::from(Span::styled("No build activity", Style::default().fg(Color::Gray)))]
+    } else {
+        app.kb_progress
+            .iter()
+            .rev()
+            .take(10)
+            .map(|s| Line::from(s.clone()))
+            .collect()
+    };
+
+    let text = Text::from(lines);
+    let paragraph = Paragraph::new(text)
+        .block(
+            Block::default()
+                .title("📚 KB Progress")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+        )
+        .wrap(Wrap { trim: true });
 
     f.render_widget(paragraph, area);
 }
