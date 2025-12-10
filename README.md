@@ -1,6 +1,6 @@
-# Homebrew Tool Assistant
+# Mac Aid: Homebrew Command Assistant
 
-A Rust-based TUI (Terminal User Interface) application that helps you discover and understand your Homebrew-installed tools through AI-powered recommendations using local Ollama.
+A Rust-based TUI application that helps you discover and understand your Homebrew-installed tools. It indexes local man/help pages into a vector store and uses a local Ollama model to recommend tools and usage examples based on your query.
 
 ## Features
 
@@ -28,16 +28,18 @@ Before running this application, ensure you have:
    brew install ollama
    ```
 
-4. **Ollama Model** (e.g., llama3.2)
+4. **Ollama Models**
    ```bash
-   ollama pull llama3.2
+   ollama pull all-minilm
+   ollama pull qwen3-coder:480b-cloud
    ```
 
 ## Installation
 
-1. Clone or navigate to the project directory:
+1. Clone the repository and enter the directory:
    ```bash
-   cd /Users/shichaopeng/Work/self-dir/mac-bin-analyse
+   git clone <repo_url>
+   cd mac-aid
    ```
 
 2. Build the project:
@@ -54,11 +56,12 @@ Before running this application, ensure you have:
 
 ### Controls
 
-- **↑/↓ Arrow Keys**: Navigate through the package list
-- **i**: Enter input mode to type your query
-- **Enter**: Submit your query to the AI
-- **Esc**: Exit input mode
-- **q**: Quit the application
+- **Enter**: Submit your query
+- **Esc**: Clear input
+- **q**: Quit
+- **Ctrl + r**: Rebuild knowledge base
+- **Shift + R**: Reload index data
+- **↑/↓**: Scroll response
 
 ### Example Queries
 
@@ -73,33 +76,30 @@ Try asking questions like:
 ### Interface Layout
 
 ```
-┌─────────────────────┬──────────────────────────────────────┐
-│  📦 Packages        │  🔍 Query                            │
-│                     │  (Type your question here)           │
-│  - git              ├──────────────────────────────────────┤
-│  - jq               │  🤖 AI Response                      │
-│  - ffmpeg           │                                      │
-│  - docker           │  The AI will recommend tools and     │
-│  - ...              │  provide usage examples here         │
-│                     │                                      │
-└─────────────────────┴──────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│  Enter your need                           │
+│ [type your query here]                       │
+└──────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│ Status: Ready / Indexing progress messages   │
+└──────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│ 💡 Recommendation                            │
+│ AI suggestions and usage examples appear here│
+└──────────────────────────────────────────────┘
 ```
 
 ## Configuration
 
 ### Changing the Ollama Model
 
-By default, the application uses the `llama3.2` model. To use a different model:
+The interactive query model is set in `src/main.rs` and defaults to `qwen3-coder:480b-cloud`:
 
-1. Pull the desired model:
-   ```bash
-   ollama pull mistral
-   ```
+```rust
+let ollama = OllamaClient::new("qwen3-coder:480b-cloud".to_string());
+```
 
-2. Edit `src/main.rs` and change the model name:
-   ```rust
-   let ollama = OllamaClient::new("mistral".to_string());
-   ```
+Pull and set any model you prefer by updating this line.
 
 ### Custom Ollama URL
 
@@ -110,7 +110,7 @@ impl OllamaClient {
     pub fn new(model: String) -> Self {
         Self {
             client: Client::new(),
-            base_url: "http://your-host:port".to_string(),  // Change this
+            base_url: "http://your-host:port".to_string(),
             model,
         }
     }
@@ -142,11 +142,11 @@ brew --version
 3. Test the API manually:
    ```bash
    curl http://localhost:11434/api/generate -d '{
-     "model": "llama3.2",
+     "model": "qwen3-coder:480b-cloud",
      "prompt": "Hello",
      "stream": false
    }'
-   ```
+  ```
 
 ## Development
 
@@ -154,11 +154,16 @@ brew --version
 
 ```
 src/
-├── main.rs      # Application entry point and event loop
-├── app.rs       # Application state management
-├── brew.rs      # Homebrew package integration
-├── ollama.rs    # Ollama API client
-└── ui.rs        # TUI rendering with Ratatui
+├── main.rs
+├── app.rs
+├── ui.rs
+├── brew.rs
+├── indexer.rs
+├── vector_store.rs
+├── rag.rs
+├── langchain_integration.rs
+├── kb_builder.rs
+└── log.rs
 ```
 
 ### Building for Development
@@ -173,6 +178,11 @@ cargo run
 ```bash
 cargo test
 ```
+
+### Data Location
+
+- Database: `~/.mac-aid/commands.db`
+- Logs: `~/.mac-aid/error.log`, `~/.mac-aid/info.log`
 
 ## License
 

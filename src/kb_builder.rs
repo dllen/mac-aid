@@ -4,6 +4,7 @@ use crate::ollama::OllamaClient;
 use crate::vector_store::VectorStore;
 use crate::log;
 use std::path::PathBuf;
+use crate::config::Config;
 use tokio::sync::mpsc::UnboundedSender;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -14,9 +15,11 @@ pub async fn build_kb(
     packages: Vec<crate::brew::BrewPackage>,
     status_tx: UnboundedSender<String>,
     kb_ready: Arc<std::sync::atomic::AtomicBool>,
+    cfg: Config,
 ) -> Result<()> {
     // Create a local Ollama client for embedding/generation
-    let ollama = OllamaClient::new("llama3.2".to_string());
+    let mut ollama = OllamaClient::new(cfg.ollama_model);
+    ollama.set_embed_model(cfg.embedding_model);
 
     // Open (or create) the vector store in this task
     let vs = VectorStore::new(db_path.clone())?;

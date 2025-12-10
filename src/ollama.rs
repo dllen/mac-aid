@@ -2,16 +2,40 @@ use anyhow::Result;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::Instant;
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::Semaphore;
 use tokio::time::{sleep, Duration};
 use rand::Rng;
+
+#[derive(Debug, Serialize, Clone)]
+pub struct OllamaOptions {
+    num_ctx: Option<u32>,
+    temperature: Option<f32>,
+    top_p: Option<f32>,
+    top_k: Option<i32>,
+    repeat_penalty: Option<f32>,
+    stop: Option<Vec<String>>,
+}
+
+impl Default for OllamaOptions {
+    fn default() -> Self {
+        Self {
+            num_ctx: Some(8192),
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            repeat_penalty: None,
+            stop: None,
+        }
+    }
+}
 
 #[derive(Debug, Serialize)]
 struct OllamaRequest {
     model: String,
     prompt: String,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    options: Option<OllamaOptions>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -25,14 +49,13 @@ pub struct OllamaClient {
     client: Client,
     base_url: String,
     model: String,
+    embed_model: String,
+    options: Option<OllamaOptions>,
     // Limit concurrent embedding requests
     limiter: Arc<Semaphore>,
     // Retry configuration
     max_retries: usize,
     base_backoff_ms: u64,
-    // Simple rate limiter: maximum requests per second for batch calls
-    requests_per_second: u32,
-    last_request: Mutex<Instant>,
     // Delay between single embedding requests (ms) - used in fallback scenarios
     #[allow(dead_code)]
     single_request_delay_ms: u64,
@@ -44,23 +67,41 @@ impl OllamaClient {
             client: Client::new(),
             base_url: "http://localhost:11434".to_string(),
             model,
+            embed_model: "all-minilm".to_string(),
+            options: None,
             limiter: Arc::new(Semaphore::new(2)), // reduce to 2 concurrent embedding requests to lower QPS
             max_retries: 5,
             base_backoff_ms: 1000, // increase base backoff from 500 to 1000ms
-            requests_per_second: 2, // reduce from 5 to 2 requests per second
-            last_request: Mutex::new(Instant::now() - Duration::from_millis(500)),
             single_request_delay_ms: 500, // 500ms delay between single requests
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn set_options(&mut self, options: OllamaOptions) {
+        self.options = Some(options);
+    }
+
+    fn effective_options(&self) -> OllamaOptions {
+        let mut opts = self.options.clone().unwrap_or_default();
+        if opts.num_ctx.is_none() {
+            opts.num_ctx = Some(8192);
+        }
+        opts
+    }
+
+    fn build_generate_request(&self, prompt: String) -> OllamaRequest {
+        OllamaRequest {
+            model: self.model.clone(),
+            prompt,
+            stream: false,
+            options: Some(self.effective_options()),
         }
     }
 
     pub async fn query(&self, user_query: &str, packages: &[String], context: Option<&str>) -> Result<String> {
         let prompt = self.build_prompt(user_query, packages, context);
         
-        let request = OllamaRequest {
-            model: self.model.clone(),
-            prompt,
-            stream: false,
-        };
+        let request = self.build_generate_request(prompt);
 
         let response = self
             .client
@@ -83,6 +124,8 @@ impl OllamaClient {
         struct EmbedRequest {
             model: String,
             prompt: String,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            options: Option<OllamaOptions>,
         }
 
         #[derive(Deserialize)]
@@ -90,10 +133,10 @@ impl OllamaClient {
             embedding: Vec<f32>,
         }
 
-        //embeddinggemma:latest
         let request = EmbedRequest {
-            model:"all-minilm".to_string(),
+            model: self.embed_model.clone(),
             prompt: text.to_string(),
+            options: Some(self.effective_options()),
         };
 
         // Retry loop with concurrency limiting and exponential backoff with jitter
@@ -151,91 +194,11 @@ impl OllamaClient {
         anyhow::bail!("Failed to get embedding after retries")
     }
 
-    /// Generate embeddings for multiple texts in a single batch request (more efficient)
-    pub async fn generate_embeddings_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-        #[derive(Serialize)]
-        struct BatchEmbedRequest {
-            model: String,
-            prompts: Vec<String>,
-        }
-
-        #[derive(Deserialize)]
-        struct BatchEmbedResponse {
-            embeddings: Vec<Vec<f32>>,
-        }
-
-        if texts.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        //embeddinggemma:latest
-        let request = BatchEmbedRequest {
-            model:"all-minilm".to_string(),
-            prompts: texts.iter().map(|t| t.to_string()).collect(),
-        };
-
-        // Retry loop with exponential backoff
-        for attempt in 0..self.max_retries {
-            let permit = self.limiter.clone().acquire_owned().await.unwrap();
-
-            // Enforce a simple QPS limit for batch requests
-            if self.requests_per_second > 0 {
-                let min_interval_ms = 1000u64 / (self.requests_per_second as u64);
-                let min_interval = Duration::from_millis(min_interval_ms);
-                let mut last = self.last_request.lock().await;
-                let now = Instant::now();
-                if now.duration_since(*last) < min_interval {
-                    let wait = min_interval - now.duration_since(*last);
-                    sleep(wait).await;
-                }
-                // update last_request to now before sending
-                *last = Instant::now();
-            }
-
-            let resp_result = self
-                .client
-                .post(format!("{}/api/embeddings", self.base_url))
-                .json(&request)
-                .send()
-                .await;
-
-            drop(permit);
-
-            match resp_result {
-                Ok(response) => {
-                    if response.status().is_success() {
-                        let batch_response: BatchEmbedResponse = response.json().await?;
-                        return Ok(batch_response.embeddings);
-                    } else {
-                        let status = response.status();
-                        if status.as_u16() == 429 || status.is_server_error() {
-                            if attempt + 1 == self.max_retries {
-                                crate::log::log_error(&format!("Batch embedding failed after retries: {}", status));
-                                anyhow::bail!("Batch embedding failed after retries: {}", status);
-                            }
-                        } else {
-                            anyhow::bail!("Batch embedding request failed: {}", status);
-                        }
-                    }
-                }
-                Err(e) => {
-                    if attempt + 1 == self.max_retries {
-                        return Err(anyhow::anyhow!("Batch embedding network error: {}", e));
-                    }
-                }
-            }
-
-            // Exponential backoff with jitter
-            let exp = 2u64.pow(attempt as u32);
-            let base = self.base_backoff_ms.saturating_mul(exp);
-            let mut rng = rand::thread_rng();
-            let jitter: u64 = rng.gen_range(0..=base);
-            let backoff = Duration::from_millis(base.saturating_add(jitter));
-            sleep(backoff).await;
-        }
-
-        anyhow::bail!("Failed to get batch embeddings after retries")
+    #[allow(dead_code)]
+    pub fn set_embed_model(&mut self, embed_model: String) {
+        self.embed_model = embed_model;
     }
+
 
     fn build_prompt(&self, user_query: &str, packages: &[String], context: Option<&str>) -> String {
         let context_section = if let Some(ctx) = context {
@@ -270,5 +233,80 @@ Format your response clearly and concisely."#,
             context_section,
             user_query
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_prompt_includes_packages_and_query() {
+        let client = OllamaClient::new("model".to_string());
+        let packages = vec!["git".to_string(), "jq".to_string()];
+        let p = client.build_prompt("need", &packages, None);
+        assert!(p.contains("git, jq"));
+        assert!(p.contains("need"));
+        assert!(!p.contains("Relevant documentation from installed tools:"));
+    }
+
+    #[test]
+    fn test_build_prompt_with_context() {
+        let client = OllamaClient::new("model".to_string());
+        let packages = vec!["git".to_string()];
+        let p = client.build_prompt("q", &packages, Some("CTX"));
+        assert!(p.contains("Relevant documentation from installed tools:"));
+        assert!(p.contains("CTX"));
+    }
+
+    #[test]
+    fn test_build_generate_request_includes_options() {
+        let mut client = OllamaClient::new("model".to_string());
+        client.set_options(OllamaOptions { num_ctx: Some(4096), ..Default::default() });
+        let req = client.build_generate_request("prompt".to_string());
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"options\":"));
+        assert!(json.contains("num_ctx"));
+        assert!(json.contains("4096"));
+    }
+
+    #[test]
+    fn test_embed_request_includes_options() {
+        #[derive(Serialize)]
+        struct EmbedRequestMirror {
+            model: String,
+            prompt: String,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            options: Option<OllamaOptions>,
+        }
+
+        let mut client = OllamaClient::new("model".to_string());
+        client.set_options(OllamaOptions { num_ctx: Some(2048), ..Default::default() });
+        let req = EmbedRequestMirror {
+            model: "all-minilm".to_string(),
+            prompt: "text".to_string(),
+            options: Some(client.effective_options()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"options\":"));
+        assert!(json.contains("num_ctx"));
+        assert!(json.contains("2048"));
+    }
+
+    #[test]
+    fn test_default_num_ctx_is_8192_for_generate() {
+        let client = OllamaClient::new("model".to_string());
+        let req = client.build_generate_request("p".to_string());
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"options\":"));
+        assert!(json.contains("8192"));
+    }
+
+    #[test]
+    fn test_effective_options_respects_explicit_num_ctx() {
+        let mut client = OllamaClient::new("model".to_string());
+        client.set_options(OllamaOptions { num_ctx: Some(1024), ..Default::default() });
+        let opts = client.effective_options();
+        assert_eq!(opts.num_ctx, Some(1024));
     }
 }

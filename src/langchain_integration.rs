@@ -20,7 +20,7 @@ impl PromptTemplate {
     pub fn format(&self, variables: &[(&str, &str)]) -> String {
         let mut result = self.template.clone();
         for (key, value) in variables {
-            let placeholder = format!("{{{{{}}}}}", key);
+            let placeholder = format!("{{{}}}", key);
             result = result.replace(&placeholder, value);
         }
         result

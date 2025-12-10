@@ -91,3 +91,22 @@ fn clean_man_content(content: &str) -> String {
     
     lines.join("\n")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_clean_man_content_removes_ansi_and_empty_lines() {
+        let s = "\x1b[31mHello\x1b[0m\n\nWorld  \n";
+        let out = clean_man_content(s);
+        assert_eq!(out, "Hello\nWorld");
+    }
+
+    #[test]
+    fn test_clean_man_content_removes_backspaces() {
+        let s = "B\x08Bold\nUnder\x08lined";
+        let out = clean_man_content(s);
+        assert!(!out.contains('\x08'));
+    }
+}

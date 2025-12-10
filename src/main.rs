@@ -8,6 +8,7 @@ mod ui;
 mod vector_store;
 mod langchain_integration;
 mod kb_builder;
+mod config;
 
 use anyhow::Result;
 use app::{App, AppState};
@@ -45,8 +46,10 @@ async fn main() -> Result<()> {
     // Load Homebrew packages
     let packages = brew::get_installed_packages()?;
 
-    // Initialize Ollama client
-    let ollama = OllamaClient::new("qwen3-coder:480b-cloud".to_string());
+    // Load config and initialize Ollama client
+    let cfg = config::load_config()?;
+    let mut ollama = OllamaClient::new(cfg.ollama_model.clone());
+    ollama.set_embed_model(cfg.embedding_model.clone());
 
     // Initialize vector store (open DB now)
     let db_path = get_db_path()?;
@@ -71,7 +74,7 @@ async fn main() -> Result<()> {
                 .expect("failed to build current-thread runtime for KB builder");
 
             rt.block_on(async move {
-                if let Err(e) = build_kb(db_path_clone, pkgs, tx, kb_flag.clone()).await {
+                if let Err(e) = build_kb(db_path_clone, pkgs, tx, kb_flag.clone(), cfg.clone()).await {
                     crate::log::log_error(&format!("Background KB build failed: {}", e));
                 }
             });

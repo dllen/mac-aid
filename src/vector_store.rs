@@ -25,6 +25,7 @@ impl VectorStore {
         }
 
         let conn = Connection::open(db_path)?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         
         // Performance optimization: enable WAL mode for better concurrent read performance
         conn.execute_batch("PRAGMA journal_mode = WAL")?;
@@ -180,4 +181,86 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     }
 
     dot_product / (magnitude_a * magnitude_b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_db_path() -> PathBuf {
+        let mut p = std::env::temp_dir();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        p.push(format!("mac_aid_test_{}.db", nanos));
+        p
+    }
+
+    #[test]
+    fn test_cosine_similarity_basic() {
+        let a = vec![1.0, 0.0];
+        let b = vec![1.0, 0.0];
+        let s = cosine_similarity(&a, &b);
+        assert!((s - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_cosine_similarity_orthogonal() {
+        let a = vec![1.0, 0.0];
+        let b = vec![0.0, 1.0];
+        let s = cosine_similarity(&a, &b);
+        assert!((s - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_cosine_similarity_mismatch_len() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![1.0, 0.0];
+        let s = cosine_similarity(&a, &b);
+        assert!((s - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_store_and_get_all() {
+        let path = temp_db_path();
+        let vs = VectorStore::new(path).unwrap();
+
+        let id1 = vs
+            .store_command("pkg", "cmd", "man", &[0.1, 0.2, 0.3])
+            .unwrap();
+        let id2 = vs
+            .store_command("pkg2", "cmd2", "man2", &[0.0, 1.0, 0.0])
+            .unwrap();
+
+        let all = vs.get_all_commands().unwrap();
+        assert_eq!(all.len(), 2);
+        let e1 = all.iter().find(|c| c.id == id1).unwrap().embedding.clone();
+        assert_eq!(e1, vec![0.1, 0.2, 0.3]);
+        let e2 = all.iter().find(|c| c.id == id2).unwrap().embedding.clone();
+        assert_eq!(e2, vec![0.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn test_search_similar_ordering() {
+        let path = temp_db_path();
+        let vs = VectorStore::new(path).unwrap();
+        vs.store_command("p1", "c1", "m", &[1.0, 0.0]).unwrap();
+        vs.store_command("p2", "c2", "m", &[0.0, 1.0]).unwrap();
+
+        let res = vs.search_similar(&[0.9, 0.1], 1).unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].command_name, "c1");
+    }
+
+    #[test]
+    fn test_clear_and_is_empty() {
+        let path = temp_db_path();
+        let mut vs = VectorStore::new(path).unwrap();
+        vs.store_command("p", "c", "m", &[0.1, 0.2]).unwrap();
+        assert!(!vs.is_empty().unwrap());
+        vs.clear().unwrap();
+        assert!(vs.is_empty().unwrap());
+    }
 }
