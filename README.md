@@ -63,6 +63,17 @@ Before running this application, ensure you have:
 - **Shift + R**: Reload index data
 - **↑/↓**: Scroll response
 
+### CLI Usage
+
+Run a one-shot query directly from the terminal (no TUI, no RAG retrieval):
+
+```bash
+mac-aid how to compress file
+mac-aid "convert image format"
+```
+
+This uses local Ollama with the configured generation model and prints the answer to stdout.
+
 ### Example Queries
 
 Try asking questions like:
@@ -100,6 +111,17 @@ let ollama = OllamaClient::new("qwen3-coder:480b-cloud".to_string());
 ```
 
 Pull and set any model you prefer by updating this line.
+
+### Config File
+
+Models are configured in `~/.mac-aid/config.json` and auto-created on first run:
+
+```json
+{
+  "ollama_model": "qwen3-coder:480b-cloud",
+  "embedding_model": "all-minilm"
+}
+```
 
 ### Custom Ollama URL
 
@@ -141,12 +163,17 @@ brew --version
 
 3. Test the API manually:
    ```bash
-   curl http://localhost:11434/api/generate -d '{
+  curl http://localhost:11434/api/generate -d '{
      "model": "qwen3-coder:480b-cloud",
      "prompt": "Hello",
      "stream": false
    }'
   ```
+
+### Non-blocking rebuild/reload
+
+- Rebuild and reload run in the background; the TUI stays responsive.
+- Queries made during rebuild/reload skip RAG retrieval and directly use Ollama.
 
 ## Development
 
@@ -164,6 +191,9 @@ src/
 ├── langchain_integration.rs
 ├── kb_builder.rs
 └── log.rs
+
+Additional docs:
+- Chinese README: `README.zh-CN.md`
 ```
 
 ### Building for Development
