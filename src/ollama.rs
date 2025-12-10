@@ -137,65 +137,100 @@ impl OllamaClient {
             embedding: Vec<f32>,
         }
 
-        let request = EmbedRequest {
-            model: self.embed_model.clone(),
-            prompt: text.to_string(),
-            options: Some(self.effective_options()),
-        };
-
-        // Retry loop with concurrency limiting and exponential backoff with jitter
-        for attempt in 0..self.max_retries {
-            // Acquire a permit to limit concurrency
-            let permit = self.limiter.clone().acquire_owned().await.unwrap();
-
-            let resp_result = self
-                .client
-                .post(format!("{}/api/embeddings", self.base_url))
-                .json(&request)
-                .send()
-                .await;
-
-            // permit is dropped here when it goes out of scope
-            drop(permit);
-
-            match resp_result {
-                Ok(response) => {
-                    if response.status().is_success() {
-                        let embed_response: EmbedResponse = response.json().await?;
-                        return Ok(embed_response.embedding);
-                    } else {
-                        let status = response.status();
-                        // Retry on 429 or 5xx
-                        if status.as_u16() == 429 || status.is_server_error() {
-                            if attempt + 1 == self.max_retries {
-                                anyhow::bail!("Ollama embedding request failed after retries: {}", status);
-                            }
-                            // backoff below
+        let options = Some(self.effective_options());
+        let model = self.embed_model.clone();
+        let chars: Vec<char> = text.chars().collect();
+        let max_chunk = 2000usize;
+        if chars.len() <= max_chunk {
+            let request = EmbedRequest { model: model.clone(), prompt: text.to_string(), options: options.clone() };
+            for attempt in 0..self.max_retries {
+                let permit = self.limiter.clone().acquire_owned().await.unwrap();
+                let resp_result = self.client.post(format!("{}/api/embeddings", self.base_url)).json(&request).send().await;
+                drop(permit);
+                match resp_result {
+                    Ok(response) => {
+                        if response.status().is_success() {
+                            let embed_response: EmbedResponse = response.json().await?;
+                            return Ok(embed_response.embedding);
                         } else {
-                            anyhow::bail!("Ollama embedding request failed: {}", status);
+                            let status = response.status();
+                            if status.as_u16() == 429 || status.is_server_error() {
+                                if attempt + 1 == self.max_retries { anyhow::bail!("Ollama embedding request failed after retries: {}", status); }
+                            } else {
+                                anyhow::bail!("Ollama embedding request failed: {}", status);
+                            }
                         }
                     }
-                }
-                Err(e) => {
-                    // network or other transient error — retry
-                    if attempt + 1 == self.max_retries {
-                        return Err(anyhow::anyhow!(e));
+                    Err(e) => {
+                        if attempt + 1 == self.max_retries { return Err(anyhow::anyhow!(e)); }
                     }
-                    // else fall through to backoff
                 }
+                let exp = 2u64.pow(attempt as u32);
+                let base = self.base_backoff_ms.saturating_mul(exp);
+                let mut rng = rand::thread_rng();
+                let jitter: u64 = rng.gen_range(0..=base);
+                let backoff = Duration::from_millis(base.saturating_add(jitter));
+                sleep(backoff).await;
             }
-
-            // Exponential backoff with jitter
-            let exp = 2u64.pow(attempt as u32);
-            let base = self.base_backoff_ms.saturating_mul(exp);
-            // jitter 0..base
-            let mut rng = rand::thread_rng();
-            let jitter: u64 = rng.gen_range(0..=base);
-            let backoff = Duration::from_millis(base.saturating_add(jitter));
-            sleep(backoff).await;
+            anyhow::bail!("Failed to get embedding after retries")
         }
 
-        anyhow::bail!("Failed to get embedding after retries")
+        let mut sum: Option<Vec<f32>> = None;
+        let mut total: f32 = 0.0;
+        let mut start = 0usize;
+        while start < chars.len() {
+            let end = std::cmp::min(start + max_chunk, chars.len());
+            let chunk: String = chars[start..end].iter().collect();
+            let weight = (end - start) as f32;
+            let request = EmbedRequest { model: model.clone(), prompt: chunk, options: options.clone() };
+            let embedding = {
+                let mut result: Option<Vec<f32>> = None;
+                for attempt in 0..self.max_retries {
+                    let permit = self.limiter.clone().acquire_owned().await.unwrap();
+                    let resp_result = self.client.post(format!("{}/api/embeddings", self.base_url)).json(&request).send().await;
+                    drop(permit);
+                    match resp_result {
+                        Ok(response) => {
+                            if response.status().is_success() {
+                                let embed_response: EmbedResponse = response.json().await?;
+                                result = Some(embed_response.embedding);
+                                break;
+                            } else {
+                                let status = response.status();
+                                if status.as_u16() == 429 || status.is_server_error() {
+                                    if attempt + 1 == self.max_retries { anyhow::bail!("Ollama embedding request failed after retries: {}", status); }
+                                } else {
+                                    anyhow::bail!("Ollama embedding request failed: {}", status);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            if attempt + 1 == self.max_retries { return Err(anyhow::anyhow!(e)); }
+                        }
+                    }
+                    let exp = 2u64.pow(attempt as u32);
+                    let base = self.base_backoff_ms.saturating_mul(exp);
+                    let mut rng = rand::thread_rng();
+                    let jitter: u64 = rng.gen_range(0..=base);
+                    let backoff = Duration::from_millis(base.saturating_add(jitter));
+                    sleep(backoff).await;
+                }
+                result.ok_or_else(|| anyhow::anyhow!("Failed to get embedding after retries"))?
+            };
+            if let Some(acc) = &mut sum {
+                if acc.len() != embedding.len() { anyhow::bail!("Embedding dimension mismatch"); }
+                for i in 0..acc.len() { acc[i] += embedding[i] * weight; }
+            } else {
+                let mut v = embedding;
+                for i in 0..v.len() { v[i] *= weight; }
+                sum = Some(v);
+            }
+            total += weight;
+            start = end;
+        }
+        let mut out = sum.ok_or_else(|| anyhow::anyhow!("Empty embedding"))?;
+        for i in 0..out.len() { out[i] /= total; }
+        Ok(out)
     }
 
     #[allow(dead_code)]
@@ -205,6 +240,21 @@ impl OllamaClient {
 
 
     fn build_prompt(&self, user_query: &str, packages: &[String], context: Option<&str>) -> String {
+        fn format_packages(packages: &[String]) -> (String, usize, bool) {
+            let max_items = 80usize;
+            let max_chars = 2000usize;
+            let mut buf = String::new();
+            let mut count = 0usize;
+            for p in packages.iter().take(max_items) {
+                let add = if buf.is_empty() { p.clone() } else { format!(", {}", p) };
+                if buf.len() + add.len() > max_chars { break; }
+                buf.push_str(&add);
+                count += 1;
+            }
+            let truncated = count < packages.len();
+            (buf, count, truncated)
+        }
+
         let context_section = if let Some(ctx) = context {
             format!(
                 r#"
@@ -217,6 +267,13 @@ Relevant documentation from installed tools:
             )
         } else {
             String::new()
+        };
+
+        let (pkg_str, shown, truncated) = format_packages(packages);
+        let pkg_header = if truncated {
+            format!("{}\n(Showing {} of {} installed tools)", pkg_str, shown, packages.len())
+        } else {
+            pkg_str
         };
 
         format!(
@@ -233,7 +290,7 @@ Please recommend the most suitable tool(s) from the available list and provide:
 4. The specific use case scenario
 
 Format your response clearly and concisely."#,
-            packages.join(", "),
+            pkg_header,
             context_section,
             user_query
         )
