@@ -22,7 +22,8 @@ pub async fn build_kb(
     ollama.set_embed_model(cfg.embedding_model);
 
     // Open (or create) the vector store in this task
-    let vs = VectorStore::new(db_path.clone())?;
+    let mut vs = VectorStore::new(db_path.clone())?;
+    let _ = vs.clear();
 
     // Index packages
     let package_names: Vec<String> = packages.iter().map(|p| p.name.clone()).collect();
