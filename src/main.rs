@@ -7,6 +7,7 @@ mod rag;
 mod ui;
 mod vector_store;
 mod langchain_integration;
+mod kb_builder;
 
 use anyhow::Result;
 use app::{App, AppState};
@@ -17,6 +18,9 @@ use crossterm::{
 };
 use ollama::OllamaClient;
 use rag::RagPipeline;
+use kb_builder::build_kb;
+use std::sync::{Arc, atomic::AtomicBool, atomic::Ordering};
+use tokio::sync::mpsc;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 use std::path::PathBuf;
@@ -44,9 +48,35 @@ async fn main() -> Result<()> {
     // Initialize Ollama client
     let ollama = OllamaClient::new("llama3.2".to_string());
 
-    // Initialize vector store
+    // Initialize vector store (open DB now)
     let db_path = get_db_path()?;
     let mut vector_store = VectorStore::new(db_path.clone())?;
+
+    // KB readiness flag and status channel
+    let kb_ready = Arc::new(AtomicBool::new(!vector_store.is_empty()?));
+    let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
+
+    // Spawn background KB builder if not ready
+    if !kb_ready.load(Ordering::SeqCst) {
+        let db_path_clone = db_path.clone();
+        let pkgs = packages.clone();
+        let tx = status_tx.clone();
+        let kb_flag = kb_ready.clone();
+
+        // Use spawn_blocking + a current-thread runtime because build_kb uses non-Send types (rusqlite::Connection)
+        tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build current-thread runtime for KB builder");
+
+            rt.block_on(async move {
+                if let Err(e) = build_kb(db_path_clone, pkgs, tx, kb_flag.clone()).await {
+                    crate::log::log_error(&format!("Background KB build failed: {}", e));
+                }
+            });
+        });
+    }
 
     // Create app
     let mut app = App::new();
@@ -124,10 +154,13 @@ async fn main() -> Result<()> {
 
     // Run the app loop
     loop {
-        let cmd = {
-            let rag = RagPipeline::new(&vector_store, &ollama);
-            run_app(&mut terminal, &mut app, &rag, &packages).await?
-        };
+        // Drain status messages from builder (non-blocking) and show in UI
+        while let Ok(msg) = status_rx.try_recv() {
+            app.set_status(Some(msg));
+            terminal.draw(|f| ui::render(f, &app))?;
+        }
+
+        let cmd = run_app(&mut terminal, &mut app, &ollama, &db_path, kb_ready.clone(), &packages).await?;
 
         match cmd {
             AppCommand::Quit => break,
@@ -175,7 +208,9 @@ async fn main() -> Result<()> {
 async fn run_app<'a>(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
-    rag: &RagPipeline<'a>,
+    ollama: &OllamaClient,
+    db_path: &PathBuf,
+    kb_ready: Arc<AtomicBool>,
     packages: &[brew::BrewPackage],
 ) -> Result<AppCommand> {
     loop {
@@ -216,16 +251,46 @@ async fn run_app<'a>(
                         app.set_loading();
                         terminal.draw(|f| ui::render(f, app))?;
 
-                        let package_names: Vec<String> =
-                            packages.iter().map(|p| p.name.clone()).collect();
+                        let package_names: Vec<String> = packages.iter().map(|p| p.name.clone()).collect();
 
-                        match rag.query_with_rag(&query, &package_names, 2).await {
-                            Ok(response) => {
-                                app.set_response(response);
-                                app.clear_input();
+                        if kb_ready.load(Ordering::SeqCst) {
+                            // KB ready: open vector store once and reuse for this query
+                            match VectorStore::new(db_path.clone()) {
+                                Ok(vs) => {
+                                    let rag = RagPipeline::new(&vs, ollama);
+                                    match rag.query_with_rag(&query, &package_names, 2).await {
+                                        Ok(response) => {
+                                            app.set_response(response);
+                                            app.clear_input();
+                                        }
+                                        Err(e) => {
+                                            app.set_response(format!("Error: {}", e));
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    crate::log::log_error(&format!("Failed to open vector store for query: {}", e));
+                                    match ollama.query(&query, &package_names, None).await {
+                                        Ok(response) => {
+                                            app.set_response(response);
+                                            app.clear_input();
+                                        }
+                                        Err(e) => {
+                                            app.set_response(format!("Error: {}", e));
+                                        }
+                                    }
+                                }
                             }
-                            Err(e) => {
-                                app.set_response(format!("Error: {}", e));
+                        } else {
+                            // KB not ready: directly query local Ollama without RAG
+                            match ollama.query(&query, &package_names, None).await {
+                                Ok(response) => {
+                                    app.set_response(response);
+                                    app.clear_input();
+                                }
+                                Err(e) => {
+                                    app.set_response(format!("Error: {}", e));
+                                }
                             }
                         }
 

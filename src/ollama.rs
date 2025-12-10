@@ -2,7 +2,8 @@ use anyhow::Result;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::Semaphore;
+use std::time::Instant;
+use tokio::sync::{Mutex, Semaphore};
 use tokio::time::{sleep, Duration};
 use rand::Rng;
 
@@ -29,6 +30,9 @@ pub struct OllamaClient {
     // Retry configuration
     max_retries: usize,
     base_backoff_ms: u64,
+    // Simple rate limiter: maximum requests per second for batch calls
+    requests_per_second: u32,
+    last_request: Mutex<Instant>,
 }
 
 impl OllamaClient {
@@ -40,6 +44,8 @@ impl OllamaClient {
             limiter: Arc::new(Semaphore::new(4)), // allow 4 concurrent embedding requests by default
             max_retries: 5,
             base_backoff_ms: 500,
+            requests_per_second: 5,
+            last_request: Mutex::new(Instant::now() - Duration::from_millis(200)),
         }
     }
 
@@ -165,6 +171,20 @@ impl OllamaClient {
         // Retry loop with exponential backoff
         for attempt in 0..self.max_retries {
             let permit = self.limiter.clone().acquire_owned().await.unwrap();
+
+            // Enforce a simple QPS limit for batch requests
+            if self.requests_per_second > 0 {
+                let min_interval_ms = 1000u64 / (self.requests_per_second as u64);
+                let min_interval = Duration::from_millis(min_interval_ms);
+                let mut last = self.last_request.lock().await;
+                let now = Instant::now();
+                if now.duration_since(*last) < min_interval {
+                    let wait = min_interval - now.duration_since(*last);
+                    sleep(wait).await;
+                }
+                // update last_request to now before sending
+                *last = Instant::now();
+            }
 
             let resp_result = self
                 .client
