@@ -20,6 +20,7 @@ pub async fn build_kb(
     // Create a local Ollama client for embedding/generation
     let mut ollama = OllamaClient::new(cfg.ollama_model);
     ollama.set_embed_model(cfg.embedding_model);
+    ollama.set_base_url(cfg.ollama_url);
 
     // Open (or create) the vector store in this task
     let mut vs = VectorStore::new(db_path.clone())?;

@@ -42,6 +42,7 @@ async fn main() -> Result<()> {
         let cfg = config::load_config()?;
         let mut ollama = OllamaClient::new(cfg.ollama_model.clone());
         ollama.set_embed_model(cfg.embedding_model.clone());
+        ollama.set_base_url(cfg.ollama_url.clone());
         let packages = brew::get_installed_packages()?;
         let package_names: Vec<String> = packages.iter().map(|p| p.name.clone()).collect();
         let query = args[1..].join(" ");
@@ -69,6 +70,7 @@ async fn main() -> Result<()> {
     let cfg = config::load_config()?;
     let mut ollama = OllamaClient::new(cfg.ollama_model.clone());
     ollama.set_embed_model(cfg.embedding_model.clone());
+    ollama.set_base_url(cfg.ollama_url.clone());
 
     // Initialize vector store (open DB now)
     let db_path = get_db_path()?;

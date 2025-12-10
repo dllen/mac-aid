@@ -1,10 +1,12 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
 pub struct Config {
     pub ollama_model: String,
     pub embedding_model: String,
+    pub ollama_url: String,
 }
 
 fn config_path() -> Result<std::path::PathBuf> {
@@ -25,9 +27,9 @@ pub fn load_config() -> Result<Config> {
     let default = Config {
         ollama_model: "qwen3-coder:480b-cloud".to_string(),
         embedding_model: "all-minilm".to_string(),
+        ollama_url: "http://localhost:11434".to_string(),
     };
     let json = serde_json::to_vec_pretty(&default)?;
     std::fs::write(path, json)?;
     Ok(default)
 }
-

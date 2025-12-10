@@ -69,16 +69,20 @@ impl OllamaClient {
             model,
             embed_model: "all-minilm".to_string(),
             options: None,
-            limiter: Arc::new(Semaphore::new(2)), // reduce to 2 concurrent embedding requests to lower QPS
-            max_retries: 5,
-            base_backoff_ms: 1000, // increase base backoff from 500 to 1000ms
-            single_request_delay_ms: 500, // 500ms delay between single requests
+            limiter: Arc::new(Semaphore::new(1)),
+            max_retries: 8,
+            base_backoff_ms: 1500,
+            single_request_delay_ms: 500,
         }
     }
 
     #[allow(dead_code)]
     pub fn set_options(&mut self, options: OllamaOptions) {
         self.options = Some(options);
+    }
+
+    pub fn set_base_url(&mut self, base_url: String) {
+        self.base_url = base_url;
     }
 
     fn effective_options(&self) -> OllamaOptions {
