@@ -60,11 +60,11 @@ pub async fn index_brew_packages(packages: &[String]) -> Result<Vec<CommandDoc>>
                     man_content: cleaned,
                 });
                 
-                println!("Indexed: {}", package);
+                crate::log::log_info(&format!("Indexed: {}", package));
             }
             Err(_) => {
                 // Some packages don't have man pages, skip them
-                crate::log::log_error(&format!("No man page for: {}", package));
+                crate::log::log_info(&format!("Indexed: {}", package));
             }
         }
     }

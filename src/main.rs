@@ -10,7 +10,7 @@ mod vector_store;
 use anyhow::Result;
 use app::{App, AppState};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -23,9 +23,9 @@ use vector_store::VectorStore;
 
 #[derive(Debug, Clone, Copy)]
 enum AppCommand {
-    Continue,
     Quit,
     Rebuild,
+    Reload,
 }
 
 #[tokio::main]
@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
 
     // Initialize vector store
     let db_path = get_db_path()?;
-    let mut vector_store = VectorStore::new(db_path)?;
+    let mut vector_store = VectorStore::new(db_path.clone())?;
 
     // Create app
     let mut app = App::new();
@@ -95,9 +95,6 @@ async fn main() -> Result<()> {
     app.set_status(None);
     app.clear_input();
 
-    // Initialize RAG pipeline
-    let rag = RagPipeline::new(&vector_store, &ollama);
-
     // Run the app loop
     loop {
         let cmd = {
@@ -114,7 +111,25 @@ async fn main() -> Result<()> {
                 }
                 app.clear_input();
             }
-            AppCommand::Continue => {}
+            AppCommand::Reload => {
+                // Reload index data by re-opening the DB (recreate VectorStore)
+                app.set_status(Some("Reloading index data...".to_string()));
+                terminal.draw(|f| ui::render(f, &app))?;
+                match VectorStore::new(db_path.clone()) {
+                    Ok(new_vs) => {
+                        vector_store = new_vs;
+                        app.set_status(Some("Index reloaded.".to_string()));
+                    }
+                    Err(e) => {
+                        app.set_status(Some(format!("Failed to reload index: {}", e)));
+                        crate::log::log_error(&format!("Failed to reload index: {}", e));
+                    }
+                }
+                terminal.draw(|f| ui::render(f, &app))?;
+                // small pause so user sees status
+                tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+                app.set_status(None);
+            }
         }
     }
 
@@ -148,7 +163,12 @@ async fn run_app<'a>(
                 KeyCode::Char('q') => {
                     return Ok(AppCommand::Quit);
                 }
-                KeyCode::Char('r') | KeyCode::Char('R') => {
+                KeyCode::Char('r') | KeyCode::Char('R') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                    // Ctrl+Shift+R => reload index data
+                    return Ok(AppCommand::Reload);
+                }
+                KeyCode::Char('r') | KeyCode::Char('R') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    // plain 'r' or 'R' triggers rebuild
                     return Ok(AppCommand::Rebuild);
                 }
                 KeyCode::Up => {

@@ -61,7 +61,5 @@ impl App {
         self.input.pop();
     }
 
-    pub fn quit(&mut self) {
-        self.should_quit = true;
-    }
+
 }
